@@ -18,12 +18,14 @@ import toTitleCase from '../utils/to-title-case.js';
  */
 class MenuButton extends ClickableComponent {
 
-  constructor(player, options={}){
+  constructor(player, options = {}) {
     super(player, options);
 
     this.update();
 
-    this.el_.setAttribute('aria-haspopup', true);
+    this.enabled_ = true;
+
+    this.el_.setAttribute('aria-haspopup', 'true');
     this.el_.setAttribute('role', 'menuitem');
     this.on('keydown', this.handleSubmenuKeyPress);
   }
@@ -34,7 +36,7 @@ class MenuButton extends ClickableComponent {
    * @method update
    */
   update() {
-    let menu = this.createMenu();
+    const menu = this.createMenu();
 
     if (this.menu) {
       this.removeChild(this.menu);
@@ -50,7 +52,7 @@ class MenuButton extends ClickableComponent {
      * @private
      */
     this.buttonPressed_ = false;
-    this.el_.setAttribute('aria-expanded', false);
+    this.el_.setAttribute('aria-expanded', 'false');
 
     if (this.items && this.items.length === 0) {
       this.hide();
@@ -66,22 +68,25 @@ class MenuButton extends ClickableComponent {
    * @method createMenu
    */
   createMenu() {
-    var menu = new Menu(this.player_);
+    const menu = new Menu(this.player_);
 
     // Add a title list item to the top
     if (this.options_.title) {
-      menu.contentEl().appendChild(Dom.createEl('li', {
+      const title = Dom.createEl('li', {
         className: 'vjs-menu-title',
         innerHTML: toTitleCase(this.options_.title),
         tabIndex: -1
-      }));
+      });
+
+      menu.children_.unshift(title);
+      Dom.insertElFirst(title, menu.contentEl());
     }
 
-    this.items = this['createItems']();
+    this.items = this.createItems();
 
     if (this.items) {
       // Add menu items to the menu
-      for (var i = 0; i < this.items.length; i++) {
+      for (let i = 0; i < this.items.length; i++) {
         menu.addItem(this.items[i]);
       }
     }
@@ -94,7 +99,7 @@ class MenuButton extends ClickableComponent {
    *
    * @method createItems
    */
-  createItems(){}
+  createItems() {}
 
   /**
    * Create the component's DOM element
@@ -115,7 +120,7 @@ class MenuButton extends ClickableComponent {
    * @method buildCSSClass
    */
   buildCSSClass() {
-    var menuButtonClass = 'vjs-menu-button';
+    let menuButtonClass = 'vjs-menu-button';
 
     // If the inline option is passed, we want to use different styles altogether.
     if (this.options_.inline === true) {
@@ -137,11 +142,11 @@ class MenuButton extends ClickableComponent {
    * @method handleClick
    */
   handleClick() {
-    this.one('mouseout', Fn.bind(this, function(){
-      this.menu.unlockShowing();
+    this.one(this.menu.contentEl(), 'mouseleave', Fn.bind(this, function(e) {
+      this.unpressButton();
       this.el_.blur();
     }));
-    if (this.buttonPressed_){
+    if (this.buttonPressed_) {
       this.unpressButton();
     } else {
       this.pressButton();
@@ -185,8 +190,8 @@ class MenuButton extends ClickableComponent {
   handleSubmenuKeyPress(event) {
 
     // Escape (27) key or Tab (9) key unpress the 'button'
-    if (event.which === 27 || event.which === 9){
-      if (this.buttonPressed_){
+    if (event.which === 27 || event.which === 9) {
+      if (this.buttonPressed_) {
         this.unpressButton();
       }
       // Don't preventDefault for Tab key - we still want to lose focus
@@ -202,10 +207,13 @@ class MenuButton extends ClickableComponent {
    * @method pressButton
    */
   pressButton() {
-    this.buttonPressed_ = true;
-    this.menu.lockShowing();
-    this.el_.setAttribute('aria-expanded', true);
-    this.menu.focus(); // set the focus into the submenu
+    if (this.enabled_) {
+      this.buttonPressed_ = true;
+      this.menu.lockShowing();
+      this.el_.setAttribute('aria-expanded', 'true');
+      // set the focus into the submenu
+      this.menu.focus();
+    }
   }
 
   /**
@@ -214,10 +222,42 @@ class MenuButton extends ClickableComponent {
    * @method unpressButton
    */
   unpressButton() {
+    if (this.enabled_) {
+      this.buttonPressed_ = false;
+      this.menu.unlockShowing();
+      this.el_.setAttribute('aria-expanded', 'false');
+      // Set focus back to this menu button
+      this.el_.focus();
+    }
+  }
+
+  /**
+   * Disable the menu button
+   *
+   * @return {Component}
+   * @method disable
+   */
+  disable() {
+    // Unpress, but don't force focus on this button
     this.buttonPressed_ = false;
     this.menu.unlockShowing();
-    this.el_.setAttribute('aria-expanded', false);
-    this.el_.focus(); // Set focus back to this menu button
+    this.el_.setAttribute('aria-expanded', 'false');
+
+    this.enabled_ = false;
+
+    return super.disable();
+  }
+
+  /**
+   * Enable the menu button
+   *
+   * @return {Component}
+   * @method disable
+   */
+  enable() {
+    this.enabled_ = true;
+
+    return super.enable();
   }
 }
 

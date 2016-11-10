@@ -1,6 +1,10 @@
 /**
  * @file video.js
  */
+
+/* global define */
+
+import window from 'global/window';
 import document from 'global/document';
 import * as setup from './setup';
 import * as stylesheet from './utils/stylesheet.js';
@@ -9,29 +13,30 @@ import EventTarget from './event-target';
 import * as Events from './utils/events.js';
 import Player from './player';
 import plugin from './plugins.js';
-import mergeOptions from '../../src/js/utils/merge-options.js';
+import mergeOptions from './utils/merge-options.js';
 import * as Fn from './utils/fn.js';
 import TextTrack from './tracks/text-track.js';
+import AudioTrack from './tracks/audio-track.js';
+import VideoTrack from './tracks/video-track.js';
 
-import assign from 'object.assign';
 import { createTimeRanges } from './utils/time-ranges.js';
 import formatTime from './utils/format-time.js';
 import log from './utils/log.js';
 import * as Dom from './utils/dom.js';
 import * as browser from './utils/browser.js';
 import * as Url from './utils/url.js';
+import computedStyle from './utils/computed-style.js';
 import extendFn from './extend.js';
 import merge from 'lodash-compat/object/merge';
-import createDeprecationProxy from './utils/create-deprecation-proxy.js';
 import xhr from 'xhr';
 
 // Include the built-in techs
 import Tech from './tech/tech.js';
-import Html5 from './tech/html5.js';
-import Flash from './tech/flash.js';
 
 // HTML5 Element Shim for IE8
-if (typeof HTMLVideoElement === 'undefined') {
+if (typeof HTMLVideoElement === 'undefined' &&
+    window.document &&
+    window.document.createElement) {
   document.createElement('video');
   document.createElement('audio');
   document.createElement('track');
@@ -52,8 +57,10 @@ if (typeof HTMLVideoElement === 'undefined') {
  * @mixes videojs
  * @method videojs
  */
-let videojs = function(id, options, ready){
-  let tag; // Element of ID
+function videojs(id, options, ready) {
+  let tag;
+
+  options = options || {};
 
   // Allow for element or ID to be passed in
   // String ID
@@ -77,11 +84,10 @@ let videojs = function(id, options, ready){
       }
 
       return videojs.getPlayers()[id];
+    }
 
     // Otherwise get element for ID
-    } else {
-      tag = Dom.getEl(id);
-    }
+    tag = Dom.getEl(id);
 
   // ID is a media element
   } else {
@@ -89,35 +95,114 @@ let videojs = function(id, options, ready){
   }
 
   // Check for a useable element
-  if (!tag || !tag.nodeName) { // re: nodeName, could be a box div also
-    throw new TypeError('The element or ID supplied is not valid. (videojs)'); // Returns
+  // re: nodeName, could be a box div also
+  if (!tag || !tag.nodeName) {
+    throw new TypeError('The element or ID supplied is not valid. (videojs)');
   }
 
   // Element may have a player attr referring to an already created player instance.
-  // If not, set up a new player and return the instance.
-  return tag['player'] || Player.players[tag.playerId] || new Player(tag, options, ready);
+  // If so return that otherwise set up a new player below
+  if (tag.player || Player.players[tag.playerId]) {
+    return tag.player || Player.players[tag.playerId];
+  }
+
+  videojs.hooks('beforesetup').forEach(function(hookFunction) {
+    const opts = hookFunction(tag, mergeOptions(options));
+
+    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) {
+      videojs.log.error('please return an object in beforesetup hooks');
+      return;
+    }
+
+    options = mergeOptions(options, opts);
+  });
+
+  // If not, set up a new player
+  const player = new Player(tag, options, ready);
+
+  videojs.hooks('setup').forEach((hookFunction) => hookFunction(player));
+
+  return player;
+}
+
+/**
+ * An Object that contains lifecycle hooks as keys which point to an array
+ * of functions that are run when a lifecycle is triggered
+ */
+videojs.hooks_ = {};
+
+/**
+ * Get a list of hooks for a specific lifecycle
+ *
+ * @param {String} type the lifecyle to get hooks from
+ * @param {Function=} optionally add a hook to the lifecycle that your are getting
+ * @return {Array} an array of hooks, or an empty array if there are none
+ */
+videojs.hooks = function(type, fn) {
+  videojs.hooks_[type] = videojs.hooks_[type] || [];
+  if (fn) {
+    videojs.hooks_[type] = videojs.hooks_[type].concat(fn);
+  }
+  return videojs.hooks_[type];
+};
+
+/**
+ * Add a function hook to a specific videojs lifecycle
+ *
+ * @param {String} type the lifecycle to hook the function to
+ * @param {Function|Array} fn the function to attach
+ */
+videojs.hook = function(type, fn) {
+  videojs.hooks(type, fn);
+};
+
+/**
+ * Remove a hook from a specific videojs lifecycle
+ *
+ * @param {String} type the lifecycle that the function hooked to
+ * @param {Function} fn the hooked function to remove
+ * @return {Boolean} the function that was removed or undef
+ */
+videojs.removeHook = function(type, fn) {
+  const index = videojs.hooks(type).indexOf(fn);
+
+  if (index <= -1) {
+    return false;
+  }
+
+  videojs.hooks_[type] = videojs.hooks_[type].slice();
+  videojs.hooks_[type].splice(index, 1);
+
+  return true;
 };
 
 // Add default styles
-let style = Dom.$('.vjs-styles-defaults');
-if (!style) {
-  style = stylesheet.createStyleElement('vjs-styles-defaults');
-  let head = Dom.$('head');
-  head.insertBefore(style, head.firstChild);
-  stylesheet.setTextContent(style, `
-    .video-js {
-      width: 300px;
-      height: 150px;
-    }
+if (window.VIDEOJS_NO_DYNAMIC_STYLE !== true) {
+  let style = Dom.$('.vjs-styles-defaults');
 
-    .vjs-fluid {
-      padding-top: 56.25%
+  if (!style) {
+    style = stylesheet.createStyleElement('vjs-styles-defaults');
+    const head = Dom.$('head');
+
+    if (head) {
+      head.insertBefore(style, head.firstChild);
     }
-  `);
+    stylesheet.setTextContent(style, `
+      .video-js {
+        width: 300px;
+        height: 150px;
+      }
+
+      .vjs-fluid {
+        padding-top: 56.25%
+      }
+    `);
+  }
 }
 
 // Run Auto-load players
-// You have to wait at least once in case this script is loaded after your video in the DOM (weird behavior only with minified version)
+// You have to wait at least once in case this script is loaded after your
+// video in the DOM (weird behavior only with minified version)
 setup.autoSetupTimeout(1, videojs);
 
 /*
@@ -125,7 +210,7 @@ setup.autoSetupTimeout(1, videojs);
  *
  * @type {String}
  */
-videojs.VERSION = '__VERSION__';
+videojs.VERSION = require('../../package.json').version;
 
 /**
  * The global options object. These are the settings that take effect
@@ -147,21 +232,15 @@ videojs.options = Player.prototype.options_;
  * @mixes videojs
  * @method getPlayers
  */
-videojs.getPlayers = function() {
-  return Player.players;
-};
+videojs.getPlayers = () => Player.players;
 
 /**
- * For backward compatibility, expose players object.
+ * Expose players object.
  *
- * @deprecated
  * @memberOf videojs
- * @property {Object|Proxy} players
+ * @property {Object} players
  */
-videojs.players = createDeprecationProxy(Player.players, {
-  get: 'Access to videojs.players is deprecated; use videojs.getPlayers instead',
-  set: 'Modification of videojs.players is deprecated'
-});
+videojs.players = Player.players;
 
 /**
  * Get a component class object by name
@@ -271,12 +350,12 @@ videojs.TOUCH_ENABLED = browser.TOUCH_ENABLED;
  * Mimics ES6 subclassing with the `extend` keyword
  * ```js
  *     // Create a basic javascript 'class'
- *     function MyClass(name){
+ *     function MyClass(name) {
  *       // Set a property at initialization
  *       this.myName = name;
  *     }
  *     // Create an instance method
- *     MyClass.prototype.sayMyName = function(){
+ *     MyClass.prototype.sayMyName = function() {
  *       alert(this.myName);
  *     };
  *     // Subclass the exisitng class and change the name
@@ -339,12 +418,12 @@ videojs.mergeOptions = mergeOptions;
 /**
  * Change the context (this) of a function
  *
- *     videojs.bind(newContext, function(){
+ *     videojs.bind(newContext, function() {
  *       this === newContext
  *     });
  *
  * NOTE: as of v5.0 we require an ES5 shim, so you should use the native
- * `function(){}.bind(newContext);` instead of this.
+ * `function() {}.bind(newContext);` instead of this.
  *
  * @param  {*}        context The object to bind as scope
  * @param  {Function} fn      The function to be bound to a scope
@@ -367,7 +446,7 @@ videojs.bind = Fn.bind;
  *       var player = this;
  *       var alertText = myPluginOptions.text || 'Player is playing!'
  *
- *       player.on('play', function(){
+ *       player.on('play', function() {
  *         alert(alertText);
  *       });
  *     });
@@ -412,7 +491,7 @@ videojs.plugin = plugin;
  * @mixes videojs
  * @method addLanguage
  */
-videojs.addLanguage = function(code, data){
+videojs.addLanguage = function(code, data) {
   code = ('' + code).toLowerCase();
   return merge(videojs.options.languages, { [code]: data })[code];
 };
@@ -544,6 +623,22 @@ videojs.xhr = xhr;
  * @type {Function}
  */
 videojs.TextTrack = TextTrack;
+
+/**
+ * export the AudioTrack class so that source handlers can create
+ * AudioTracks and then add them to the players AudioTrackList
+ *
+ * @type {Function}
+ */
+videojs.AudioTrack = AudioTrack;
+
+/**
+ * export the VideoTrack class so that source handlers can create
+ * VideoTracks and then add them to the players VideoTrackList
+ *
+ * @type {Function}
+ */
+videojs.VideoTrack = VideoTrack;
 
 /**
  * Determines, via duck typing, whether or not a value is a DOM element.
@@ -700,6 +795,20 @@ videojs.appendContent = Dom.appendContent;
  */
 videojs.insertContent = Dom.insertContent;
 
+/**
+ * A safe getComputedStyle with an IE8 fallback.
+ *
+ * This is because in Firefox, if the player is loaded in an iframe with `display:none`,
+ * then `getComputedStyle` returns `null`, so, we do a null-check to make sure
+ * that the player doesn't break in these cases.
+ * See https://bugzilla.mozilla.org/show_bug.cgi?id=548397 for more details.
+ *
+ * @function computedStyle
+ * @param el the element you want the computed style of
+ * @param prop the property name you want
+ */
+videojs.computedStyle = computedStyle;
+
 /*
  * Custom Universal Module Definition (UMD)
  *
@@ -707,12 +816,12 @@ videojs.insertContent = Dom.insertContent;
  * still support requirejs and browserify. This also needs to be closure
  * compiler compatible, so string keys are used.
  */
-if (typeof define === 'function' && define['amd']) {
-  define('videojs', [], function(){ return videojs; });
+if (typeof define === 'function' && define.amd) {
+  define('videojs', [], () => videojs);
 
 // checking that module is an object too because of umdjs/umd#35
 } else if (typeof exports === 'object' && typeof module === 'object') {
-  module['exports'] = videojs;
+  module.exports = videojs;
 }
 
 export default videojs;

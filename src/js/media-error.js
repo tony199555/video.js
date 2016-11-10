@@ -4,24 +4,45 @@
 import assign from 'object.assign';
 
 /*
- * Custom MediaError to mimic the HTML5 MediaError
+ * Custom MediaError class which mimics the standard HTML5 MediaError class.
  *
- * @param {Number} code The media error code
+ * @param {Number|String|Object|MediaError} value
+ *        This can be of multiple types:
+ *        - Number: should be a standard error code
+ *        - String: an error message (the code will be 0)
+ *        - Object: arbitrary properties
+ *        - MediaError (native): used to populate a video.js MediaError object
+ *        - MediaError (video.js): will return itself if it's already a
+ *          video.js MediaError object.
  */
-let MediaError = function(code){
-  if (typeof code === 'number') {
-    this.code = code;
-  } else if (typeof code === 'string') {
+function MediaError(value) {
+
+  // Allow redundant calls to this constructor to avoid having `instanceof`
+  // checks peppered around the code.
+  if (value instanceof MediaError) {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    this.code = value;
+  } else if (typeof value === 'string') {
     // default code is zero, so this is a custom error
-    this.message = code;
-  } else if (typeof code === 'object') { // object
-    assign(this, code);
+    this.message = value;
+  } else if (typeof value === 'object') {
+
+    // We assign the `code` property manually because native MediaError objects
+    // do not expose it as an own/enumerable property of the object.
+    if (typeof value.code === 'number') {
+      this.code = value.code;
+    }
+
+    assign(this, value);
   }
 
   if (!this.message) {
     this.message = MediaError.defaultMessages[this.code] || '';
   }
-};
+}
 
 /*
  * The error code that refers two one of the defined
@@ -52,13 +73,15 @@ MediaError.prototype.message = '';
  */
 MediaError.prototype.status = null;
 
+// These errors are indexed by the W3C standard numeric value. The order
+// should not be changed!
 MediaError.errorTypes = [
-  'MEDIA_ERR_CUSTOM',            // = 0
-  'MEDIA_ERR_ABORTED',           // = 1
-  'MEDIA_ERR_NETWORK',           // = 2
-  'MEDIA_ERR_DECODE',            // = 3
-  'MEDIA_ERR_SRC_NOT_SUPPORTED', // = 4
-  'MEDIA_ERR_ENCRYPTED'          // = 5
+  'MEDIA_ERR_CUSTOM',
+  'MEDIA_ERR_ABORTED',
+  'MEDIA_ERR_NETWORK',
+  'MEDIA_ERR_DECODE',
+  'MEDIA_ERR_SRC_NOT_SUPPORTED',
+  'MEDIA_ERR_ENCRYPTED'
 ];
 
 MediaError.defaultMessages = {
@@ -71,7 +94,7 @@ MediaError.defaultMessages = {
 
 // Add types as properties on MediaError
 // e.g. MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
-for (var errNum = 0; errNum < MediaError.errorTypes.length; errNum++) {
+for (let errNum = 0; errNum < MediaError.errorTypes.length; errNum++) {
   MediaError[MediaError.errorTypes[errNum]] = errNum;
   // values should be accessible on both the class and instance
   MediaError.prototype[MediaError.errorTypes[errNum]] = errNum;

@@ -3,6 +3,8 @@
 # [Video.js - HTML5 Video Player](http://videojs.com)
 [![Build Status](https://travis-ci.org/videojs/video.js.svg?branch=master)](https://travis-ci.org/videojs/video.js)
 [![Coverage Status](https://coveralls.io/repos/github/videojs/video.js/badge.svg?branch=master)](https://coveralls.io/github/videojs/video.js?branch=master)
+[![Slack Status](http://slack.videojs.com/badge.svg)](http://slack.videojs.com)
+
 
 [![NPM](https://nodei.co/npm/video.js.png?downloads=true&downloadRank=true)](https://nodei.co/npm/video.js/)
 
@@ -15,8 +17,8 @@ Simply add these includes to your document's
 `<head>`:
 
 ```html
-<link href="//vjs.zencdn.net/5.0/video-js.min.css" rel="stylesheet">
-<script src="//vjs.zencdn.net/5.0/video.min.js"></script>
+<link href="//vjs.zencdn.net/5.8/video-js.min.css" rel="stylesheet">
+<script src="//vjs.zencdn.net/5.8/video.min.js"></script>
 ```
 
 Then, whenever you want to use Video.js you can simply use the `<video>` element as your normally would, but with an additional `data-setup` attribute containing any Video.js options. These options
@@ -53,11 +55,11 @@ var player = videojs('really-cool-video', { /* Options */ }, function() {
 If you're ready to dive in, the [documentation](http://docs.videojs.com) is the first place to go for more information.
 
 ## Contributing
-Video.js is a free and open source library, and we appreciate any help you're willing to give. Check out the [contributing guide](CONTRIBUTING.md).
+Video.js is a free and open source library, and we appreciate any help you're willing to give. Check out the [contributing guide](/CONTRIBUTING.md).
 
 _Video.js uses [BrowserStack](https://browserstack.com) for compatibility testing_
 ## Building your own Video.js from source
-To build your own custom version read the section on [contributing code](CONTRIBUTING.md#contributing-code) and ["Building your own copy"](CONTRIBUTING.md#building-your-own-copy-of-videojs) in the contributing guide.
+To build your own custom version read the section on [contributing code](/CONTRIBUTING.md#contributing-code) and ["Building your own copy"](/CONTRIBUTING.md#building-your-own-copy-of-videojs) in the contributing guide.
 ## License
 
 Video.js is licensed under the Apache License, Version 2.0. [View the license file](LICENSE)

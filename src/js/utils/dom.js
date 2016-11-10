@@ -3,7 +3,7 @@
  */
 import document from 'global/document';
 import window from 'global/window';
-import  * as Guid from './guid.js';
+import * as Guid from './guid.js';
 import log from './log.js';
 import tsml from 'tsml';
 
@@ -14,7 +14,7 @@ import tsml from 'tsml';
  * @return {Boolean}
  */
 function isNonBlankString(str) {
-  return typeof str === 'string' && /\S/.test(str);
+  return typeof str === 'string' && (/\S/).test(str);
 }
 
 /**
@@ -25,7 +25,7 @@ function isNonBlankString(str) {
  * @return {Boolean}
  */
 function throwIfWhitespace(str) {
-  if (/\s/.test(str)) {
+  if ((/\s/).test(str)) {
     throw new Error('class has illegal whitespace characters');
   }
 }
@@ -41,6 +41,17 @@ function classRegExp(className) {
 }
 
 /**
+ * Determines, via duck typing, whether or not a value is a DOM element.
+ *
+ * @function isEl
+ * @param    {Mixed} value
+ * @return   {Boolean}
+ */
+export function isEl(value) {
+  return !!value && typeof value === 'object' && value.nodeType === 1;
+}
+
+/**
  * Creates functions to query the DOM using a given method.
  *
  * @function createQuerier
@@ -49,14 +60,17 @@ function classRegExp(className) {
  * @return {Function}
  */
 function createQuerier(method) {
-  return function (selector, context) {
+  return function(selector, context) {
     if (!isNonBlankString(selector)) {
       return document[method](null);
     }
     if (isNonBlankString(context)) {
       context = document.querySelector(context);
     }
-    return (isEl(context) ? context : document)[method](selector);
+
+    const ctx = isEl(context) ? context : document;
+
+    return ctx[method] && ctx[method](selector);
   };
 }
 
@@ -68,7 +82,7 @@ function createQuerier(method) {
  * @return {Element}    Element with supplied ID
  * @function getEl
  */
-export function getEl(id){
+export function getEl(id) {
   if (id.indexOf('#') === 0) {
     id = id.slice(1);
   }
@@ -82,14 +96,15 @@ export function getEl(id){
  * @param  {String} [tagName='div'] Name of tag to be created.
  * @param  {Object} [properties={}] Element properties to be applied.
  * @param  {Object} [attributes={}] Element attributes to be applied.
+ * @param  {String|Element|TextNode|Array|Function} [content] Contents for the element (see: `normalizeContent`)
  * @return {Element}
  * @function createEl
  */
-export function createEl(tagName='div', properties={}, attributes={}){
-  let el = document.createElement(tagName);
+export function createEl(tagName = 'div', properties = {}, attributes = {}, content) {
+  const el = document.createElement(tagName);
 
-  Object.getOwnPropertyNames(properties).forEach(function(propName){
-    let val = properties[propName];
+  Object.getOwnPropertyNames(properties).forEach(function(propName) {
+    const val = properties[propName];
 
     // See #2176
     // We originally were accepting both properties and attributes in the
@@ -99,15 +114,23 @@ export function createEl(tagName='div', properties={}, attributes={}){
                 has been deprecated. Use the third argument instead.
                 createEl(type, properties, attributes). Attempting to set ${propName} to ${val}.`);
       el.setAttribute(propName, val);
+
+    // Handle textContent since it's not supported everywhere and we have a
+    // method for it.
+    } else if (propName === 'textContent') {
+      textContent(el, val);
     } else {
       el[propName] = val;
     }
   });
 
-  Object.getOwnPropertyNames(attributes).forEach(function(attrName){
-    let val = attributes[attrName];
+  Object.getOwnPropertyNames(attributes).forEach(function(attrName) {
     el.setAttribute(attrName, attributes[attrName]);
   });
+
+  if (content) {
+    appendContent(el, content);
+  }
 
   return el;
 }
@@ -126,6 +149,7 @@ export function textContent(el, text) {
   } else {
     el.textContent = text;
   }
+  return el;
 }
 
 /**
@@ -136,7 +160,7 @@ export function textContent(el, text) {
  * @private
  * @function insertElFirst
  */
-export function insertElFirst(child, parent){
+export function insertElFirst(child, parent) {
   if (parent.firstChild) {
     parent.insertBefore(child, parent.firstChild);
   } else {
@@ -210,7 +234,7 @@ export function hasElData(el) {
  * @function removeElData
  */
 export function removeElData(el) {
-  let id = el[elIdAttr];
+  const id = el[elIdAttr];
 
   if (!id) {
     return;
@@ -222,7 +246,7 @@ export function removeElData(el) {
   // Remove the elIdAttr property from the DOM node
   try {
     delete el[elIdAttr];
-  } catch(e) {
+  } catch (e) {
     if (el.removeAttribute) {
       el.removeAttribute(elIdAttr);
     } else {
@@ -240,12 +264,11 @@ export function removeElData(el) {
  * @param {String} classToCheck Classname to check
  */
 export function hasElClass(element, classToCheck) {
+  throwIfWhitespace(classToCheck);
   if (element.classList) {
     return element.classList.contains(classToCheck);
-  } else {
-    throwIfWhitespace(classToCheck);
-    return classRegExp(classToCheck).test(element.className);
   }
+  return classRegExp(classToCheck).test(element.className);
 }
 
 /**
@@ -305,7 +328,7 @@ export function toggleElClass(element, classToToggle, predicate) {
   // This CANNOT use `classList` internally because IE does not support the
   // second parameter to the `classList.toggle()` method! Which is fine because
   // `classList` will be used by the add/remove functions.
-  let has = hasElClass(element, classToToggle);
+  const has = hasElClass(element, classToToggle);
 
   if (typeof predicate === 'function') {
     predicate = predicate(element, classToToggle);
@@ -339,8 +362,8 @@ export function toggleElClass(element, classToToggle, predicate) {
  * @function setElAttributes
  */
 export function setElAttributes(el, attributes) {
-  Object.getOwnPropertyNames(attributes).forEach(function(attrName){
-    let attrValue = attributes[attrName];
+  Object.getOwnPropertyNames(attributes).forEach(function(attrName) {
+    const attrValue = attributes[attrName];
 
     if (attrValue === null || typeof attrValue === 'undefined' || attrValue === false) {
       el.removeAttribute(attrName);
@@ -362,25 +385,23 @@ export function setElAttributes(el, attributes) {
  * @function getElAttributes
  */
 export function getElAttributes(tag) {
-  var obj, knownBooleans, attrs, attrName, attrVal;
-
-  obj = {};
+  const obj = {};
 
   // known boolean attributes
   // we can check for matching boolean properties, but older browsers
   // won't know about HTML5 boolean attributes that we still read from
-  knownBooleans = ','+'autoplay,controls,loop,muted,default'+',';
+  const knownBooleans = ',' + 'autoplay,controls,loop,muted,default' + ',';
 
   if (tag && tag.attributes && tag.attributes.length > 0) {
-    attrs = tag.attributes;
+    const attrs = tag.attributes;
 
-    for (var i = attrs.length - 1; i >= 0; i--) {
-      attrName = attrs[i].name;
-      attrVal = attrs[i].value;
+    for (let i = attrs.length - 1; i >= 0; i--) {
+      const attrName = attrs[i].name;
+      let attrVal = attrs[i].value;
 
       // check for known booleans
       // the matching element property will return a value for typeof
-      if (typeof tag[attrName] === 'boolean' || knownBooleans.indexOf(','+attrName+',') !== -1) {
+      if (typeof tag[attrName] === 'boolean' || knownBooleans.indexOf(',' + attrName + ',') !== -1) {
         // the value of an included boolean attribute is typically an empty
         // string ('') which would equal false if we just check for a false value.
         // we also don't want support bad code like autoplay='false'
@@ -392,6 +413,41 @@ export function getElAttributes(tag) {
   }
 
   return obj;
+}
+
+/**
+ * Get the value of an element's attribute
+ *
+ * @param {Element} el
+ * @param {String} attribute Attribute to get
+ * @return {String} value of the attribute
+ * @method getAttribute
+ */
+export function getAttribute(el, attribute) {
+  return el.getAttribute(attribute);
+}
+
+/**
+ * Set the value of an element's attribute
+ *
+ * @param {Element} el
+ * @param {String} attribute Attribute to set
+ * @param {String} value Value to set the attribute to
+ * @method setAttribute
+ */
+export function setAttribute(el, attribute, value) {
+  el.setAttribute(attribute, value);
+}
+
+/**
+ * Remove an element's attribute
+ *
+ * @param {Element} el
+ * @param {String} attribute Attribute to remove
+ * @method removeAttribute
+ */
+export function removeAttribute(el, attribute) {
+  el.removeAttribute(attribute);
 }
 
 /**
@@ -471,13 +527,13 @@ export function findElPosition(el) {
  * @return {Object} This object will have x and y coordinates corresponding to the mouse position
  */
 export function getPointerPosition(el, event) {
-  let position = {};
-  let box = findElPosition(el);
-  let boxW = el.offsetWidth;
-  let boxH = el.offsetHeight;
+  const position = {};
+  const box = findElPosition(el);
+  const boxW = el.offsetWidth;
+  const boxH = el.offsetHeight;
 
-  let boxY = box.top;
-  let boxX = box.left;
+  const boxY = box.top;
+  const boxX = box.left;
   let pageY = event.pageY;
   let pageX = event.pageX;
 
@@ -490,17 +546,6 @@ export function getPointerPosition(el, event) {
   position.x = Math.max(0, Math.min(1, (pageX - boxX) / boxW));
 
   return position;
-}
-
-/**
- * Determines, via duck typing, whether or not a value is a DOM element.
- *
- * @function isEl
- * @param    {Mixed} value
- * @return   {Boolean}
- */
-export function isEl(value) {
-  return !!value && typeof value === 'object' && value.nodeType === 1;
 }
 
 /**
@@ -577,7 +622,7 @@ export function normalizeContent(content) {
       return value;
     }
 
-    if (typeof value === 'string' && /\S/.test(value)) {
+    if (typeof value === 'string' && (/\S/).test(value)) {
       return document.createTextNode(value);
     }
   }).filter(value => value);

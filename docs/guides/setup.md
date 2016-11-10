@@ -41,10 +41,11 @@ $ bower install --save video.js
 
 ### Self Hosted. ###
 To entirely self-host, you'll need to pull in the font files and let Video.js know where the swf is located. If you simply copy the dist folder or zip file contents into your project everything
-should Just Work™, but the paths can easily be changed by editing the LESS file and re-building, or by modifying the generated CSS file.
+should Just Work™, but the paths can easily be changed by editing the LESS file and re-building, or by modifying the generated CSS file. Additionally include the [videojs-vtt.js](https://www.npmjs.com/package/videojs-vtt.js) source, which adds the `WebVTT` object to the global scope.
 
 ```html
 <link href="//example.com/path/to/video-js.min.css" rel="stylesheet">
+<script src="//example.com/path/to/videojs-vtt.js"></script>
 <script src="//example.com/path/to/video.min.js"></script>
 <script>
   videojs.options.flash.swf = "http://example.com/path/to/video-js.swf"
@@ -120,4 +121,4 @@ videojs(document.getElementsByClassName('awesome_video_class')[0], {}, function(
 });
 ```
 
-\* If you have trouble playing back content you know is in the [correct format](http://blog.zencoder.com/2013/09/13/what-formats-do-i-need-for-html5-video/), your HTTP server might not be delivering the content with the correct [MIME type](http://en.wikipedia.org/wiki/Internet_media_type#Type_video). Please double check your content's headers before opening an [issue](https://github.com/videojs/video.js/blob/master/CONTRIBUTING.md).
+\* If you have trouble playing back content you know is in the [correct format](http://blog.zencoder.com/2013/09/13/what-formats-do-i-need-for-html5-video/), your HTTP server might not be delivering the content with the correct [MIME type](http://en.wikipedia.org/wiki/Internet_media_type#Type_video). Please double check your content's headers before opening an [issue](/CONTRIBUTING.md).

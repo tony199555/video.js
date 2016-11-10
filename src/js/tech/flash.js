@@ -10,11 +10,13 @@ import * as Dom from '../utils/dom.js';
 import * as Url from '../utils/url.js';
 import { createTimeRange } from '../utils/time-ranges.js';
 import FlashRtmpDecorator from './flash-rtmp';
+import timeExpiringCache from './flash-cache.js';
 import Component from '../component';
 import window from 'global/window';
 import assign from 'object.assign';
 
-let navigator = window.navigator;
+const navigator = window.navigator;
+
 /**
  * Flash Media Controller - Wrapper for fallback SWF API
  *
@@ -25,12 +27,12 @@ let navigator = window.navigator;
  */
 class Flash extends Tech {
 
-  constructor(options, ready){
+  constructor(options, ready) {
     super(options, ready);
 
     // Set the source when ready
     if (options.source) {
-      this.ready(function(){
+      this.ready(function() {
         this.setSource(options.source);
       }, true);
     }
@@ -38,7 +40,7 @@ class Flash extends Tech {
     // Having issues with Flash reloading on certain page actions (hide/resize/fullscreen) in certain browsers
     // This allows resetting the playhead when we catch the reload
     if (options.startTime) {
-      this.ready(function(){
+      this.ready(function() {
         this.load();
         this.play();
         this.currentTime(options.startTime);
@@ -58,6 +60,34 @@ class Flash extends Tech {
     this.on('seeked', function() {
       this.lastSeekTarget_ = undefined;
     });
+
+    // calling into the SWF can be expensive, especially if Flash is
+    // busy rendering video frames
+    // automatically cache commonly used properties for a short period
+    // of time so that multiple calls within a short time period don't
+    // all pay a big performance penalty for properties that change
+    // relatively slowly over time
+    const getCurrentTimeCached = timeExpiringCache(() => {
+      return this.el_.vjs_getProperty('currentTime');
+    }, 100);
+
+    this.currentTime = (time) => {
+      // when seeking make the reported time keep up with the requested time
+      // by reading the time we're seeking to
+      if (this.seeking()) {
+        return this.lastSeekTarget_ || 0;
+      }
+
+      return getCurrentTimeCached();
+    };
+    this.buffered = timeExpiringCache(() => {
+      const ranges = this.el_.vjs_getProperty('buffered');
+
+      if (ranges.length === 0) {
+        return createTimeRange();
+      }
+      return createTimeRange(ranges[0][0], ranges[0][1]);
+    }, 100);
   }
 
   /**
@@ -67,46 +97,51 @@ class Flash extends Tech {
    * @method createEl
    */
   createEl() {
-    let options = this.options_;
+    const options = this.options_;
 
     // If video.js is hosted locally you should also set the location
     // for the hosted swf, which should be relative to the page (not video.js)
     // Otherwise this adds a CDN url.
     // The CDN also auto-adds a swf URL for that specific version.
     if (!options.swf) {
-      options.swf = '//vjs.zencdn.net/swf/__SWF_VERSION__/video-js.swf';
+      const ver = require('videojs-swf/package.json').version;
+
+      options.swf = `//vjs.zencdn.net/swf/${ver}/video-js.swf`;
     }
 
     // Generate ID for swf object
-    let objId = options.techId;
+    const objId = options.techId;
 
     // Merge default flashvars with ones passed in to init
-    let flashVars = assign({
+    const flashVars = assign({
 
       // SWF Callback Functions
-      'readyFunction': 'videojs.Flash.onReady',
-      'eventProxyFunction': 'videojs.Flash.onEvent',
-      'errorEventProxyFunction': 'videojs.Flash.onError',
+      readyFunction: 'videojs.Flash.onReady',
+      eventProxyFunction: 'videojs.Flash.onEvent',
+      errorEventProxyFunction: 'videojs.Flash.onError',
 
       // Player Settings
-      'autoplay': options.autoplay,
-      'preload': options.preload,
-      'loop': options.loop,
-      'muted': options.muted
+      autoplay: options.autoplay,
+      preload: options.preload,
+      loop: options.loop,
+      muted: options.muted
 
     }, options.flashVars);
 
     // Merge default parames with ones passed in
-    let params = assign({
-      'wmode': 'opaque', // Opaque is needed to overlay controls, but can affect playback performance
-      'bgcolor': '#000000' // Using bgcolor prevents a white flash when the object is loading
+    const params = assign({
+      // Opaque is needed to overlay controls, but can affect playback performance
+      wmode: 'opaque',
+      // Using bgcolor prevents a white flash when the object is loading
+      bgcolor: '#000000'
     }, options.params);
 
     // Merge default attributes with ones passed in
-    let attributes = assign({
-      'id': objId,
-      'name': objId, // Both ID and Name needed or swf to identify itself
-      'class': 'vjs-tech'
+    const attributes = assign({
+      // Both ID and Name needed or swf to identify itself
+      id: objId,
+      name: objId,
+      class: 'vjs-tech'
     }, options.attributes);
 
     this.el_ = Flash.embed(options.swf, flashVars, params, attributes);
@@ -167,8 +202,7 @@ class Flash extends Tech {
     // Currently the SWF doesn't autoplay if you load a source later.
     // e.g. Load player w/ no source, wait 2s, set src.
     if (this.autoplay()) {
-      var tech = this;
-      this.setTimeout(function(){ tech.play(); }, 0);
+      this.setTimeout(() => this.play(), 0);
     }
   }
 
@@ -187,7 +221,8 @@ class Flash extends Tech {
    * @method setCurrentTime
    */
   setCurrentTime(time) {
-    let seekable = this.seekable();
+    const seekable = this.seekable();
+
     if (seekable.length) {
       // clamp to the current seekable range
       time = time > seekable.start(0) ? time : seekable.start(0);
@@ -207,14 +242,6 @@ class Flash extends Tech {
    * @return {Number} Current time
    * @method currentTime
    */
-  currentTime(time) {
-    // when seeking make the reported time keep up with the requested time
-    // by reading the time we're seeking to
-    if (this.seeking()) {
-      return this.lastSeekTarget_ || 0;
-    }
-    return this.el_.vjs_getProperty('currentTime');
-  }
 
   /**
    * Get current source
@@ -224,9 +251,22 @@ class Flash extends Tech {
   currentSrc() {
     if (this.currentSource_) {
       return this.currentSource_.src;
-    } else {
-      return this.el_.vjs_getProperty('currentSrc');
     }
+    return this.el_.vjs_getProperty('currentSrc');
+  }
+
+  /**
+   * Get media duration
+   *
+   * @returns {Number} Media duration
+   */
+  duration() {
+    if (this.readyState() === 0) {
+      return NaN;
+    }
+    const duration = this.el_.vjs_getProperty('duration');
+
+    return duration >= 0 ? duration : Infinity;
   }
 
   /**
@@ -262,6 +302,7 @@ class Flash extends Tech {
    */
   seekable() {
     const duration = this.duration();
+
     if (duration === 0) {
       return createTimeRange();
     }
@@ -274,13 +315,6 @@ class Flash extends Tech {
    * @return {TimeRangeObject}
    * @method buffered
    */
-  buffered() {
-    let ranges = this.el_.vjs_getProperty('buffered');
-    if (ranges.length === 0) {
-      return createTimeRange();
-    }
-    return createTimeRange(ranges[0][0], ranges[0][1]);
-  }
 
   /**
    * Get fullscreen support -
@@ -291,7 +325,8 @@ class Flash extends Tech {
    * @method supportsFullScreen
    */
   supportsFullScreen() {
-    return false; // Flash does not allow fullscreen through javascript
+    // Flash does not allow fullscreen through javascript
+    return false;
   }
 
   /**
@@ -308,18 +343,23 @@ class Flash extends Tech {
 
 }
 
-
 // Create setters and getters for attributes
 const _api = Flash.prototype;
 const _readWrite = 'rtmpConnection,rtmpStream,preload,defaultPlaybackRate,playbackRate,autoplay,loop,mediaGroup,controller,controls,volume,muted,defaultMuted'.split(',');
-const _readOnly = 'networkState,readyState,initialTime,duration,startOffsetTime,paused,ended,videoTracks,audioTracks,videoWidth,videoHeight'.split(',');
+const _readOnly = 'networkState,readyState,initialTime,startOffsetTime,paused,ended,videoWidth,videoHeight'.split(',');
 
-function _createSetter(attr){
-  var attrUpper = attr.charAt(0).toUpperCase() + attr.slice(1);
-  _api['set'+attrUpper] = function(val){ return this.el_.vjs_setProperty(attr, val); };
+function _createSetter(attr) {
+  const attrUpper = attr.charAt(0).toUpperCase() + attr.slice(1);
+
+  _api['set' + attrUpper] = function(val) {
+    return this.el_.vjs_setProperty(attr, val);
+  };
 }
+
 function _createGetter(attr) {
-  _api[attr] = function(){ return this.el_.vjs_getProperty(attr); };
+  _api[attr] = function() {
+    return this.el_.vjs_getProperty(attr);
+  };
 }
 
 // Create getter and setters for all read/write attributes
@@ -335,7 +375,7 @@ for (let i = 0; i < _readOnly.length; i++) {
 
 /* Flash Support Testing -------------------------------------------------------- */
 
-Flash.isSupported = function(){
+Flash.isSupported = function() {
   return Flash.version()[0] >= 10;
   // return swfobject.hasFlashPlayerVersion('10');
 };
@@ -357,7 +397,7 @@ Flash.nativeSourceHandler = {};
  * @param  {String} type    The mimetype to check
  * @return {String}         'probably', 'maybe', or '' (empty string)
  */
-Flash.nativeSourceHandler.canPlayType = function(type){
+Flash.nativeSourceHandler.canPlayType = function(type) {
   if (type in Flash.formats) {
     return 'maybe';
   }
@@ -369,13 +409,15 @@ Flash.nativeSourceHandler.canPlayType = function(type){
  * Check Flash can handle the source natively
  *
  * @param  {Object} source  The source object
+ * @param  {Object} options The options passed to the tech
  * @return {String}         'probably', 'maybe', or '' (empty string)
  */
-Flash.nativeSourceHandler.canHandleSource = function(source){
-  var type;
+Flash.nativeSourceHandler.canHandleSource = function(source, options) {
+  let type;
 
   function guessMimeType(src) {
-    var ext = Url.getFileExtension(src);
+    const ext = Url.getFileExtension(src);
+
     if (ext) {
       return `video/${ext}`;
     }
@@ -397,10 +439,11 @@ Flash.nativeSourceHandler.canHandleSource = function(source){
  * Adaptive source handlers will have more complicated workflows before passing
  * video data to the video element
  *
- * @param  {Object} source    The source object
- * @param  {Flash} tech   The instance of the Flash tech
+ * @param  {Object} source   The source object
+ * @param  {Flash}  tech     The instance of the Flash tech
+ * @param  {Object} options  The options to pass to the source
  */
-Flash.nativeSourceHandler.handleSource = function(source, tech){
+Flash.nativeSourceHandler.handleSource = function(source, tech, options) {
   tech.setSrc(source.src);
 };
 
@@ -408,7 +451,7 @@ Flash.nativeSourceHandler.handleSource = function(source, tech){
  * Clean up the source handler when disposing the player or switching sources..
  * (no cleanup is needed when supporting the format natively)
  */
-Flash.nativeSourceHandler.dispose = function(){};
+Flash.nativeSourceHandler.dispose = function() {};
 
 // Register the native source handler
 Flash.registerSourceHandler(Flash.nativeSourceHandler);
@@ -420,9 +463,9 @@ Flash.formats = {
   'video/m4v': 'MP4'
 };
 
-Flash.onReady = function(currSwf){
-  let el = Dom.getEl(currSwf);
-  let tech = el && el.tech;
+Flash.onReady = function(currSwf) {
+  const el = Dom.getEl(currSwf);
+  const tech = el && el.tech;
 
   // if there is no el then the tech has been disposed
   // and the tech element was removed from the player div
@@ -434,7 +477,7 @@ Flash.onReady = function(currSwf){
 
 // The SWF isn't always ready when it says it is. Sometimes the API functions still need to be added to the object.
 // If it's not ready, we set a timeout to check again shortly.
-Flash.checkReady = function(tech){
+Flash.checkReady = function(tech) {
   // stop worrying if the tech has been disposed
   if (!tech.el()) {
     return;
@@ -446,20 +489,29 @@ Flash.checkReady = function(tech){
     tech.triggerReady();
   } else {
     // wait longer
-    this.setTimeout(function(){
-      Flash['checkReady'](tech);
+    this.setTimeout(function() {
+      Flash.checkReady(tech);
     }, 50);
   }
 };
 
 // Trigger events from the swf on the player
-Flash.onEvent = function(swfID, eventName){
-  let tech = Dom.getEl(swfID).tech;
-  tech.trigger(eventName);
+Flash.onEvent = function(swfID, eventName) {
+  const tech = Dom.getEl(swfID).tech;
+  const args = Array.prototype.slice.call(arguments, 2);
+
+  // dispatch Flash events asynchronously for two reasons:
+  // - Flash swallows any exceptions generated by javascript it
+  //   invokes
+  // - Flash is suspended until the javascript returns which may cause
+  //   playback performance issues
+  tech.setTimeout(function() {
+    tech.trigger(eventName, args);
+  }, 1);
 };
 
 // Log errors from the swf
-Flash.onError = function(swfID, err){
+Flash.onError = function(swfID, err) {
   const tech = Dom.getEl(swfID).tech;
 
   // trigger MEDIA_ERR_SRC_NOT_SUPPORTED
@@ -472,7 +524,7 @@ Flash.onError = function(swfID, err){
 };
 
 // Flash Version Check
-Flash.version = function(){
+Flash.version = function() {
   let version = '0,0,0';
 
   // IE
@@ -480,18 +532,20 @@ Flash.version = function(){
     version = new window.ActiveXObject('ShockwaveFlash.ShockwaveFlash').GetVariable('$version').replace(/\D+/g, ',').match(/^,?(.+),?$/)[1];
 
   // other browsers
-  } catch(e) {
+  } catch (e) {
     try {
-      if (navigator.mimeTypes['application/x-shockwave-flash'].enabledPlugin){
+      if (navigator.mimeTypes['application/x-shockwave-flash'].enabledPlugin) {
         version = (navigator.plugins['Shockwave Flash 2.0'] || navigator.plugins['Shockwave Flash']).description.replace(/\D+/g, ',').match(/^,?(.+),?$/)[1];
       }
-    } catch(err) {}
+    } catch (err) {
+      // satisfy linter
+    }
   }
   return version.split(',');
 };
 
 // Flash embedding method. Only used in non-iframe mode
-Flash.embed = function(swf, flashVars, params, attributes){
+Flash.embed = function(swf, flashVars, params, attributes) {
   const code = Flash.getEmbedCode(swf, flashVars, params, attributes);
 
   // Get element by embedding code and retrieving created element
@@ -500,7 +554,7 @@ Flash.embed = function(swf, flashVars, params, attributes){
   return obj;
 };
 
-Flash.getEmbedCode = function(swf, flashVars, params, attributes){
+Flash.getEmbedCode = function(swf, flashVars, params, attributes) {
   const objTag = '<object type="application/x-shockwave-flash" ';
   let flashVarsString = '';
   let paramsString = '';
@@ -508,36 +562,38 @@ Flash.getEmbedCode = function(swf, flashVars, params, attributes){
 
   // Convert flash vars to string
   if (flashVars) {
-    Object.getOwnPropertyNames(flashVars).forEach(function(key){
+    Object.getOwnPropertyNames(flashVars).forEach(function(key) {
       flashVarsString += `${key}=${flashVars[key]}&amp;`;
     });
   }
 
   // Add swf, flashVars, and other default params
   params = assign({
-    'movie': swf,
-    'flashvars': flashVarsString,
-    'allowScriptAccess': 'always', // Required to talk to swf
-    'allowNetworking': 'all' // All should be default, but having security issues.
+    movie: swf,
+    flashvars: flashVarsString,
+    // Required to talk to swf
+    allowScriptAccess: 'always',
+    // All should be default, but having security issues.
+    allowNetworking: 'all'
   }, params);
 
   // Create param tags string
-  Object.getOwnPropertyNames(params).forEach(function(key){
+  Object.getOwnPropertyNames(params).forEach(function(key) {
     paramsString += `<param name="${key}" value="${params[key]}" />`;
   });
 
   attributes = assign({
     // Add swf to attributes (need both for IE and Others to work)
-    'data': swf,
+    data: swf,
 
     // Default to 100% width/height
-    'width': '100%',
-    'height': '100%'
+    width: '100%',
+    height: '100%'
 
   }, attributes);
 
   // Create Attributes string
-  Object.getOwnPropertyNames(attributes).forEach(function(key){
+  Object.getOwnPropertyNames(attributes).forEach(function(key) {
     attrsString += `${key}="${attributes[key]}" `;
   });
 

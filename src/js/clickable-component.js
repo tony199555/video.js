@@ -24,10 +24,7 @@ class ClickableComponent extends Component {
 
     this.emitTapEvents();
 
-    this.on('tap', this.handleClick);
-    this.on('click', this.handleClick);
-    this.on('focus', this.handleFocus);
-    this.on('blur', this.handleBlur);
+    this.enable();
   }
 
   /**
@@ -39,7 +36,7 @@ class ClickableComponent extends Component {
    * @return {Element}
    * @method createEl
    */
-  createEl(tag='div', props={}, attributes={}) {
+  createEl(tag = 'div', props = {}, attributes = {}) {
     props = assign({
       className: this.buildCSSClass(),
       tabIndex: 0
@@ -51,11 +48,15 @@ class ClickableComponent extends Component {
 
     // Add ARIA attributes for clickable element which is not a native HTML button
     attributes = assign({
-      role: 'button',
-      'aria-live': 'polite' // let the screen reader user know that the text of the element may change
+      'role': 'button',
+
+      // let the screen reader user know that the text of the element may change
+      'aria-live': 'polite'
     }, attributes);
 
-    let el = super.createEl(tag, props, attributes);
+    this.tabIndex_ = props.tabIndex;
+
+    const el = super.createEl(tag, props, attributes);
 
     this.createControlTextEl(el);
 
@@ -78,7 +79,7 @@ class ClickableComponent extends Component {
       el.appendChild(this.controlTextEl_);
     }
 
-    this.controlText(this.controlText_);
+    this.controlText(this.controlText_, el);
 
     return this.controlTextEl_;
   }
@@ -86,15 +87,21 @@ class ClickableComponent extends Component {
   /**
    * Controls text - both request and localize
    *
-   * @param {String} text Text for element
+   * @param {String}  text Text for element
+   * @param {Element=} el Element to set the title on
    * @return {String}
    * @method controlText
    */
-  controlText(text) {
-    if (!text) return this.controlText_ || 'Need Text';
+  controlText(text, el = this.el()) {
+    if (!text) {
+      return this.controlText_ || 'Need Text';
+    }
+
+    const localizedText = this.localize(text);
 
     this.controlText_ = text;
-    this.controlTextEl_.innerHTML = this.localize(this.controlText_);
+    this.controlTextEl_.innerHTML = localizedText;
+    el.setAttribute('title', localizedText);
 
     return this;
   }
@@ -110,23 +117,41 @@ class ClickableComponent extends Component {
   }
 
   /**
-   * Adds a child component inside this clickable-component
+   * Enable the component element
    *
-   * @param {String|Component} child The class name or instance of a child to add
-   * @param {Object=} options Options, including options to be passed to children of the child.
-   * @return {Component} The child component (created by this process if a string was used)
-   * @method addChild
+   * @return {Component}
+   * @method enable
    */
-  addChild(child, options={}) {
-    // TODO: Fix adding an actionable child to a ClickableComponent; currently
-    // it will cause issues with assistive technology (e.g. screen readers)
-    // which support ARIA, since an element with role="button" cannot have
-    // actionable child elements.
+  enable() {
+    this.removeClass('vjs-disabled');
+    this.el_.setAttribute('aria-disabled', 'false');
+    if (typeof this.tabIndex_ !== 'undefined') {
+      this.el_.setAttribute('tabIndex', this.tabIndex_);
+    }
+    this.on('tap', this.handleClick);
+    this.on('click', this.handleClick);
+    this.on('focus', this.handleFocus);
+    this.on('blur', this.handleBlur);
+    return this;
+  }
 
-    //let className = this.constructor.name;
-    //log.warn(`Adding a child to a ClickableComponent (${className}) can cause issues with assistive technology which supports ARIA, since an element with role="button" cannot have actionable child elements.`);
-
-    return super.addChild(child, options);
+  /**
+   * Disable the component element
+   *
+   * @return {Component}
+   * @method disable
+   */
+  disable() {
+    this.addClass('vjs-disabled');
+    this.el_.setAttribute('aria-disabled', 'true');
+    if (typeof this.tabIndex_ !== 'undefined') {
+      this.el_.removeAttribute('tabIndex');
+    }
+    this.off('tap', this.handleClick);
+    this.off('click', this.handleClick);
+    this.off('focus', this.handleFocus);
+    this.off('blur', this.handleBlur);
+    return this;
   }
 
   /**
@@ -151,12 +176,15 @@ class ClickableComponent extends Component {
    * @method handleKeyPress
    */
   handleKeyPress(event) {
+
     // Support Space (32) or Enter (13) key operation to fire a click event
     if (event.which === 32 || event.which === 13) {
       event.preventDefault();
       this.handleClick(event);
     } else if (super.handleKeyPress) {
-      super.handleKeyPress(event); // Pass keypress handling up for unsupported keys
+
+      // Pass keypress handling up for unsupported keys
+      super.handleKeyPress(event);
     }
   }
 

@@ -3,15 +3,14 @@
  */
 import TextTrackCueList from './text-track-cue-list';
 import * as Fn from '../utils/fn.js';
-import * as Guid from '../utils/guid.js';
-import * as browser from '../utils/browser.js';
-import * as TextTrackEnum from './text-track-enums';
+import {TextTrackKind, TextTrackMode} from './track-enums';
 import log from '../utils/log.js';
-import EventTarget from '../event-target';
-import document from 'global/document';
 import window from 'global/window';
+import Track from './track.js';
 import { isCrossOrigin } from '../utils/url.js';
 import XHR from 'xhr';
+import merge from '../utils/merge-options';
+import * as browser from '../utils/browser.js';
 
 /**
  * takes a webvtt file contents and parses it into cues
@@ -20,16 +19,17 @@ import XHR from 'xhr';
  * @param {Track} track track to addcues to
  */
 const parseCues = function(srcContent, track) {
-  let parser = new window.WebVTT.Parser(window,
+  const parser = new window.WebVTT.Parser(window,
                                         window.vttjs,
                                         window.WebVTT.StringDecoder());
+  const errors = [];
 
   parser.oncue = function(cue) {
     track.addCue(cue);
   };
 
   parser.onparsingerror = function(error) {
-    log.error(error);
+    errors.push(error);
   };
 
   parser.onflush = function() {
@@ -40,9 +40,18 @@ const parseCues = function(srcContent, track) {
   };
 
   parser.parse(srcContent);
+  if (errors.length > 0) {
+    if (window.console && window.console.groupCollapsed) {
+      window.console.groupCollapsed(`Text Track parsing errors for ${track.src}`);
+    }
+    errors.forEach((error) => log.error(error));
+    if (window.console && window.console.groupEnd) {
+      window.console.groupEnd();
+    }
+  }
+
   parser.flush();
 };
-
 
 /**
  * load a track from a  specifed url
@@ -51,10 +60,10 @@ const parseCues = function(srcContent, track) {
  * @param {Track} track track to addcues to
  */
 const loadTrack = function(src, track) {
-  let opts = {
+  const opts = {
     uri: src
   };
-  let crossOrigin = isCrossOrigin(src);
+  const crossOrigin = isCrossOrigin(src);
 
   if (crossOrigin) {
     opts.cors = crossOrigin;
@@ -67,20 +76,29 @@ const loadTrack = function(src, track) {
 
     track.loaded_ = true;
 
+    // Make sure that vttjs has loaded, otherwise, wait till it finished loading
     // NOTE: this is only used for the alt/video.novtt.js build
     if (typeof window.WebVTT !== 'function') {
-      window.setTimeout(function() {
-        parseCues(responseBody, track);
-      }, 100);
+      if (track.tech_) {
+        const loadHandler = () => parseCues(responseBody, track);
+
+        track.tech_.on('vttjsloaded', loadHandler);
+        track.tech_.on('vttjserror', () => {
+          log.error(`vttjs failed to load, stopping trying to process ${track.src}`);
+          track.tech_.off('vttjsloaded', loadHandler);
+        });
+
+      }
     } else {
       parseCues(responseBody, track);
     }
+
   }));
 };
 
 /**
  * A single text track as defined in:
- * https://html.spec.whatwg.org/multipage/embedded-content.html#texttrack
+ * @link https://html.spec.whatwg.org/multipage/embedded-content.html#texttrack
  *
  * interface TextTrack : EventTarget {
  *   readonly attribute TextTrackKind kind;
@@ -102,48 +120,53 @@ const loadTrack = function(src, track) {
  * };
  *
  * @param {Object=} options Object of option names and values
- * @extends EventTarget
+ * @extends Track
  * @class TextTrack
  */
-class TextTrack extends EventTarget {
+class TextTrack extends Track {
   constructor(options = {}) {
-    super();
     if (!options.tech) {
       throw new Error('A tech was not provided.');
     }
 
-    let tt = this;
+    const settings = merge(options, {
+      kind: TextTrackKind[options.kind] || 'subtitles',
+      language: options.language || options.srclang || ''
+    });
+    let mode = TextTrackMode[settings.mode] || 'disabled';
+    const default_ = settings.default;
+
+    if (settings.kind === 'metadata' || settings.kind === 'chapters') {
+      mode = 'hidden';
+    }
+    // on IE8 this will be a document element
+    // for every other browser this will be a normal object
+    const tt = super(settings);
+
+    tt.tech_ = settings.tech;
 
     if (browser.IS_IE8) {
-      tt = document.createElement('custom');
-
-      for (let prop in TextTrack.prototype) {
+      for (const prop in TextTrack.prototype) {
         if (prop !== 'constructor') {
           tt[prop] = TextTrack.prototype[prop];
         }
       }
     }
 
-    tt.tech_ = options.tech;
-
-    let mode = TextTrackEnum.TextTrackMode[options.mode] || 'disabled';
-    let kind = TextTrackEnum.TextTrackKind[options.kind] || 'subtitles';
-    let label = options.label || '';
-    let language = options.language || options.srclang || '';
-    let id = options.id || 'vjs_text_track_' + Guid.newGUID();
-
-    if (kind === 'metadata' || kind === 'chapters') {
-      mode = 'hidden';
-    }
-
     tt.cues_ = [];
     tt.activeCues_ = [];
 
-    let cues = new TextTrackCueList(tt.cues_);
-    let activeCues = new TextTrackCueList(tt.activeCues_);
+    const cues = new TextTrackCueList(tt.cues_);
+    const activeCues = new TextTrackCueList(tt.activeCues_);
     let changed = false;
-    let timeupdateHandler = Fn.bind(tt, function() {
+    const timeupdateHandler = Fn.bind(tt, function() {
+
+      // Accessing this.activeCues for the side-effects of updating itself
+      // due to it's nature as a getter function. Do not remove or cues will
+      // stop updating!
+      /* eslint-disable no-unused-expressions */
       this.activeCues;
+      /* eslint-enable no-unused-expressions */
       if (changed) {
         this.trigger('cuechange');
         changed = false;
@@ -154,30 +177,9 @@ class TextTrack extends EventTarget {
       tt.tech_.on('timeupdate', timeupdateHandler);
     }
 
-    Object.defineProperty(tt, 'kind', {
+    Object.defineProperty(tt, 'default', {
       get() {
-        return kind;
-      },
-      set() {}
-    });
-
-    Object.defineProperty(tt, 'label', {
-      get() {
-        return label;
-      },
-      set() {}
-    });
-
-    Object.defineProperty(tt, 'language', {
-      get() {
-        return language;
-      },
-      set() {}
-    });
-
-    Object.defineProperty(tt, 'id', {
-      get() {
-        return id;
+        return default_;
       },
       set() {}
     });
@@ -187,7 +189,7 @@ class TextTrack extends EventTarget {
         return mode;
       },
       set(newMode) {
-        if (!TextTrackEnum.TextTrackMode[newMode]) {
+        if (!TextTrackMode[newMode]) {
           return;
         }
         mode = newMode;
@@ -220,11 +222,11 @@ class TextTrack extends EventTarget {
           return activeCues;
         }
 
-        let ct = this.tech_.currentTime();
-        let active = [];
+        const ct = this.tech_.currentTime();
+        const active = [];
 
         for (let i = 0, l = this.cues.length; i < l; i++) {
-          let cue = this.cues[i];
+          const cue = this.cues[i];
 
           if (cue.startTime <= ct && cue.endTime >= ct) {
             active.push(cue);
@@ -255,16 +257,14 @@ class TextTrack extends EventTarget {
       set() {}
     });
 
-    if (options.src) {
-      tt.src = options.src;
-      loadTrack(options.src, tt);
+    if (settings.src) {
+      tt.src = settings.src;
+      loadTrack(settings.src, tt);
     } else {
       tt.loaded_ = true;
     }
 
-    if (browser.IS_IE8) {
-      return tt;
-    }
+    return tt;
   }
 
   /**
@@ -274,7 +274,7 @@ class TextTrack extends EventTarget {
    * @method addCue
    */
   addCue(cue) {
-    let tracks = this.tech_.textTracks();
+    const tracks = this.tech_.textTracks();
 
     if (tracks) {
       for (let i = 0; i < tracks.length; i++) {
@@ -298,7 +298,7 @@ class TextTrack extends EventTarget {
     let removed = false;
 
     for (let i = 0, l = this.cues_.length; i < l; i++) {
-      let cue = this.cues_[i];
+      const cue = this.cues_[i];
 
       if (cue === removeCue) {
         this.cues_.splice(i, 1);
